@@ -1,0 +1,38 @@
+# ===================
+# ENVIRONMENT
+# ===================
+.env
+.env.local
+.env.*.local
+
+# ===================
+# DATA FILES
+# ===================
+backend/data.json
+
+# ===================
+# BUILD OUTPUTS
+# ===================
+frontend/build/
+frontend/node_modules/
+backend/node_modules/
+
+# ===================
+# IDE
+# ===================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===================
+# OS
+# ===================
+.DS_Store
+Thumbs.db
+
+# ===================
+# LOGS
+# ===================
+*.log
+npm-debug.log*

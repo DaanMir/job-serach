@@ -32,7 +32,7 @@ async function fetchJobDescription(url) {
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-const SYSTEM_PROMPT = `You are an expert job screening AI for a Senior Product Manager. Your job is to score jobs accurately and differentiate clearly between strong fits and weak fits.
+const SYSTEM_PROMPT = `You are an expert job screening AI for a Senior Product Manager. Your job is to score jobs ACCURATELY and meaningfully differentiate between candidates.
 
 Candidate profile:
 - 5+ years Senior PM, $3MM+ business impact
@@ -44,16 +44,46 @@ Candidate profile:
 - Target: remote-first roles in EU timezone or worldwide
 - Salary: €600-700/day contract, €90k+ permanent
 
-SCORING RULES — apply strictly:
-- ON-SITE or OFFICE REQUIRED jobs: score 0, recommendation SKIP, redFlag "On-site required"
-- Jobs outside EU timezone with no remote flexibility: score max 30
-- Junior/Associate/Entry-level titles: score 0, recommendation SKIP
-- Strong AI/ML + fintech + senior PM match with full remote: score 75-95
-- Good PM match but missing AI/fintech focus: score 50-70
-- PM role but wrong domain (e.g. retail, gaming, HR): score 30-50
-- Non-PM roles that slipped through: score 0-20, recommendation SKIP
+STRICT SCORING MATRIX — apply exactly:
 
-DIFFERENTIATE scores meaningfully — do not cluster everything at 50-65. Use the full 0-100 range.
+**SCORE 0-10 (SKIP):**
+- On-site/office-only roles
+- Junior/Associate/Intern roles
+- Non-PM roles (developer, designer, marketing, etc.)
+
+**SCORE 10-25 (LOW FIT):**
+- PM role but wrong domain (retail, gaming, HR, food, hospitality)
+- No remote flexibility
+- Salary significantly below target
+- Company reputation concerns
+
+**SCORE 25-45 (BELOW AVERAGE):**
+- PM role but missing senior level
+- Partial skill match (some relevant skills but not strong)
+- Location issues (wrong timezone, limited remote)
+- Missing AI/ML or fintech entirely
+
+**SCORE 45-65 (AVERAGE/GOOD):**
+- Solid PM match with some relevant skills
+- Remote-friendly but not EU timezone
+- Salary at or near target
+- Good company but not exceptional
+
+**SCORE 65-80 (STRONG FIT):**
+- PM role with AI/ML or Fintech focus
+- EU timezone or worldwide remote
+- Salary at or above target
+- Multiple matched skills
+- Strong company/product fit
+
+**SCORE 80-95 (EXCEPTIONAL FIT):**
+- Perfect domain match (AI/ML + Fintech + Senior PM)
+- Worldwide remote with EU-friendly timezone
+- Above-target salary
+- Multiple EXACT skill matches
+- Ideal for career growth
+
+YOU MUST use the FULL 0-100 range. Most jobs should NOT be in the 50-70 range. Be harsh — most real jobs are below average fits.
 
 You MUST respond ONLY with valid JSON, no markdown, no explanation.`;
 
@@ -61,7 +91,12 @@ const USER_PROMPT = (job) => {
   const hasDescription = job.description && job.description.length > 100;
   const descSection = hasDescription
     ? `Job Description:\n${job.description.substring(0, 2500)}`
-    : `Job Description: Not available — score based on title, company, location, and salary context. For senior PM roles at reputable companies, assume a reasonable baseline score of 50-65.`;
+    : `Job Description: NOT AVAILABLE.
+    Score based ONLY on job title, company, and location context.
+    WITHOUT a description, you CANNOT be certain this is a good fit.
+    Be CONSERVATIVE — if you cannot verify skills/requirements from title alone, score LOWER.
+    For generic PM titles at unknown companies without description: score 20-35.
+    Only score higher if title clearly indicates AI/ML/Fintech AND company is known.`;
 
   return `Analyze this job and score it for the candidate profile.
 
@@ -75,6 +110,9 @@ ${descSection}
 
 IMPORTANT: If the job requires on-site presence, is office-only, or explicitly says "no remote" → score MUST be 0 and recommendation MUST be SKIP.
 Check the description carefully for on-site requirements even if location says "Remote" (some jobs say hybrid or require relocation).
+
+CRITICAL: Use the FULL score range. Most real PM jobs are NOT good fits — be harsh.
+If you're unsure without a description, score LOWER, not higher.
 
 Return ONLY this JSON structure:
 {
@@ -100,7 +138,7 @@ async function scoreWithRetry(job, maxRetries = 3) {
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: USER_PROMPT(job) },
         ],
-        temperature: 0.1,
+        temperature: 0.5,
         max_tokens: 600,
       });
 

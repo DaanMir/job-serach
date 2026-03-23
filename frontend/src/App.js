@@ -5,9 +5,9 @@ const API = "/api";
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 const scoreColor = (s) => {
-  if (s >= 80) return "var(--green)";
-  if (s >= 60) return "var(--yellow)";
-  if (s >= 40) return "var(--orange)";
+  if (s >= 75) return "var(--green)";
+  if (s >= 55) return "var(--yellow)";
+  if (s >= 35) return "var(--orange)";
   return "var(--red)";
 };
 
@@ -26,9 +26,9 @@ const statusColors = {
   ghosted: "#90A4AE",
 };
 
-function ScoreBadge({ score }) {
+function ScoreBadge({ score, baseScore, qualityBonus }) {
   return (
-    <div className="score-badge" style={{ "--sc": scoreColor(score) }}>
+    <div className="score-badge" style={{ "--sc": scoreColor(score) }} title={baseScore != null ? `Base: ${baseScore} + Quality: ${qualityBonus ?? 0}` : ""}>
       <svg viewBox="0 0 36 36">
         <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1a1a2e" strokeWidth="3" />
         <circle
@@ -51,7 +51,7 @@ function JobCard({ job, onApply, applied }) {
   return (
     <div className={`job-card ${expanded ? "expanded" : ""}`}>
       <div className="job-card-header" onClick={() => setExpanded(!expanded)}>
-        <ScoreBadge score={job.score || 0} />
+        <ScoreBadge score={job.score || 0} baseScore={job.baseScore} qualityBonus={job.qualityBonus} />
         <div className="job-meta">
           <div className="job-title">{job.title}</div>
           <div className="job-company">{job.company}</div>
@@ -74,6 +74,14 @@ function JobCard({ job, onApply, applied }) {
       {expanded && (
         <div className="job-details">
           {job.summary && <p className="job-summary">{job.summary}</p>}
+
+          {job.baseScore != null && (
+            <div className="score-breakdown">
+              <span>Base score: <strong>{job.baseScore}</strong></span>
+              <span>Quality bonus: <strong>+{job.qualityBonus ?? 0}</strong></span>
+              <span>Final: <strong>{job.score}</strong></span>
+            </div>
+          )}
 
           <div className="details-grid">
             {job.highlights?.length > 0 && (
@@ -298,10 +306,14 @@ export default function App() {
     setApplyModal(null);
   };
 
-  const jobs = scan?.jobs || [];
-  const filteredJobs = (filterRec === "ALL" ? jobs : jobs.filter((j) => j.recommendation === filterRec))
-    .slice()
+  // Filtra ON_SITE que escaparam do backend, ordena por score desc
+  const jobs = (scan?.jobs || [])
+    .filter((j) => j.locationAssessment !== "ON_SITE")
     .sort((a, b) => (b.score || 0) - (a.score || 0));
+
+  const filteredJobs = filterRec === "ALL"
+    ? jobs
+    : jobs.filter((j) => j.recommendation === filterRec);
 
   const stats = {
     total: jobs.length,
@@ -384,7 +396,7 @@ export default function App() {
                       className={`filter-btn ${filterRec === f ? "active" : ""}`}
                       onClick={() => setFilterRec(f)}
                     >
-                      {f.replace("_", " ")}
+                      {f.replace(/_/g, " ")}
                       <span className="filter-count">
                         {f === "ALL" ? jobs.length : jobs.filter((j) => j.recommendation === f).length}
                       </span>

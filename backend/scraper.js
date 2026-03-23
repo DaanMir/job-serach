@@ -14,8 +14,7 @@ const GOOGLE_CX = process.env.GOOGLE_CX;
 const JSEARCH_API_KEY = process.env.JSEARCH_API_KEY;
 
 // ─────────────────────────────────────────────
-// FILTRO US-ONLY: Remove vagas que exigem presença nos EUA
-// Verifica: location, description e title
+// FILTRO US-ONLY
 // ─────────────────────────────────────────────
 const US_ONLY_PATTERNS = [
   /\bUnited States only\b/i,
@@ -36,7 +35,6 @@ const US_ONLY_PATTERNS = [
   /require? (to be )?(located in |based in )?(US|USA)/i,
 ];
 
-// Estados americanos para filtro de localização
 const US_STATES = [
   "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
   "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
@@ -47,11 +45,10 @@ const US_STATES = [
   "texas", "utah", "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming",
 ];
 
-// Cidades americanas principais
 const US_CITIES = [
   "new york", "san francisco", "los angeles", "chicago", "houston", "phoenix", "philadelphia",
   "san antonio", "san diego", "dallas", "austin", "seattle", "denver", "boston", "atlanta",
-  "miami", "portland", "detroit", "minneapolis", "tampa", "denver", "charlotte",
+  "miami", "portland", "detroit", "minneapolis", "tampa", "charlotte",
 ];
 
 export function isUSOnly(job) {
@@ -60,36 +57,42 @@ export function isUSOnly(job) {
   const loc = (job.location || "").toLowerCase();
   const text = `${title} ${desc} ${loc}`;
 
-  // 1. Verifica padrões de US-only na descrição/título
   for (const pattern of US_ONLY_PATTERNS) {
-    if (pattern.test(text)) {
-      return true;
-    }
+    if (pattern.test(text)) return true;
   }
 
-  // 2. Verifica se a localização é exclusivamente US (sem "remote" ou "worldwide")
   const hasRemoteOrWorldwide = /remote|worldwide|global|anywhere|eu|europe/i.test(loc);
-
   if (!hasRemoteOrWorldwide) {
-    // Verifica estados americanos
     for (const state of US_STATES) {
       if (loc.includes(state)) return true;
     }
-    // Verifica cidades americanas
     for (const city of US_CITIES) {
       if (loc.includes(city)) return true;
     }
-    // Verifica países específicos
     if (/\bUSA\b|\bUS\b|^United States$/.test(loc) && !/europe|eu|global|worldwide|remote/i.test(loc)) {
       return true;
     }
   }
-
   return false;
 }
 
 // ─────────────────────────────────────────────
-// REMOTIVE (API pública gratuita — ilimitado)
+// DEDUP POR EMPRESA + TÍTULO-BASE
+// Remove variantes de localização da mesma vaga
+// Ex: "PM - AI Travel (Spain)" e "PM - AI Travel (Ireland)" → mesmo título-base
+// ─────────────────────────────────────────────
+function normalizeTitleForDedup(title = "") {
+  return title
+    .toLowerCase()
+    // Remove sufixos de localização entre parênteses: (Spain), (100% Remote - UK), (Remote - Ireland)
+    .replace(/\s*\([^)]*\)/g, "")
+    // Remove sufixos após traço com localização comum
+    .replace(/\s*[-–]\s*(remote|worldwide|global|eu|europe|uk|usa|germany|france|spain|ireland|portugal|italy|netherlands)[^-–]*/gi, "")
+    .trim();
+}
+
+// ─────────────────────────────────────────────
+// REMOTIVE
 // ─────────────────────────────────────────────
 export async function fetchRemotive() {
   const results = [];
@@ -119,7 +122,7 @@ export async function fetchRemotive() {
 }
 
 // ─────────────────────────────────────────────
-// HIMALAYAS (API pública gratuita — ilimitado)
+// HIMALAYAS
 // ─────────────────────────────────────────────
 export async function fetchHimalayas() {
   const results = [];
@@ -149,8 +152,7 @@ export async function fetchHimalayas() {
 }
 
 // ─────────────────────────────────────────────
-// LINKEDIN JOBS API (npm — gratuito, sem key)
-// github.com/VishwaGauravIn/linkedin-jobs-api
+// LINKEDIN DIRECT
 // ─────────────────────────────────────────────
 export async function fetchLinkedInDirect() {
   const results = [];
@@ -177,7 +179,6 @@ export async function fetchLinkedInDirect() {
       for (const job of jobs) {
         const title = job.position || job.title || "";
         const url = job.jobUrl || "";
-        // Pula vagas sem título ou sem URL válida
         if (!title || !url) continue;
         results.push({
           id: `linkedin_${Buffer.from(title + (job.company || "")).toString("base64").substring(0, 20)}`,
@@ -194,16 +195,13 @@ export async function fetchLinkedInDirect() {
     } catch (e) {
       console.error("LinkedIn direct error:", e.message);
     }
-    // Delay entre queries para não ser bloqueado
     await new Promise((r) => setTimeout(r, 1500));
   }
   return results;
 }
 
 // ─────────────────────────────────────────────
-// ENRIQUECIMENTO DE JD via JSearch job-details
-// Busca JD completa só para vagas LinkedIn sem descrição
-// Gasta 1 request por vaga relevante — aproveitamento máximo
+// ENRIQUECIMENTO JD via JSearch job-details
 // ─────────────────────────────────────────────
 const TARGET_TITLE_KEYWORDS = [
   "product manager", "head of product", "vp of product",
@@ -219,7 +217,6 @@ function isRelevantTitle(title = "") {
 export async function enrichLinkedInJDs(linkedInJobs) {
   if (!JSEARCH_API_KEY) return linkedInJobs;
 
-  // Só enriquece vagas sem JD que passam no filtro de título
   const toEnrich = linkedInJobs.filter(
     (j) => isRelevantTitle(j.title) && (!j.description || j.description.length < 100) && j.url
   );
@@ -230,8 +227,6 @@ export async function enrichLinkedInJDs(linkedInJobs) {
 
   for (const job of toEnrich) {
     try {
-      // Extrai job_id do URL do LinkedIn
-      // formato: linkedin.com/jobs/view/1234567890
       const jobIdMatch = job.url.match(/\/jobs\/view\/(\d+)/);
       if (!jobIdMatch) continue;
 
@@ -250,20 +245,18 @@ export async function enrichLinkedInJDs(linkedInJobs) {
         console.log(`    ✓ Got JD for "${job.title}" at ${job.company}`);
       }
     } catch (e) {
-      // Silencioso — não bloqueia o fluxo
+      // Silencioso
     }
     await new Promise((r) => setTimeout(r, 400));
   }
 
-  // Retorna lista com JDs preenchidas
   return linkedInJobs.map((job) =>
     enriched.has(job.id) ? { ...job, description: enriched.get(job.id) } : job
   );
 }
 
 // ─────────────────────────────────────────────
-// JSEARCH via RapidAPI (200 req/mês free)
-// Agrega LinkedIn, Indeed, Glassdoor e mais
+// JSEARCH
 // ─────────────────────────────────────────────
 export async function fetchJSearch() {
   if (!JSEARCH_API_KEY) {
@@ -272,8 +265,6 @@ export async function fetchJSearch() {
   }
 
   const results = [];
-  // JSearch retorna JD completa — fonte mais valiosa para scoring preciso
-  // 200 req/mês free: 6 queries × 1 = 6 requests por scan
   const queries = [
     "Senior Product Manager AI remote Europe",
     "Head of Product LLM fintech remote",
@@ -325,8 +316,7 @@ export async function fetchJSearch() {
 }
 
 // ─────────────────────────────────────────────
-// SERPAPI — Google Jobs (100 req/mês free)
-// Fallback quando JSearch estiver próximo do limite
+// SERPAPI
 // ─────────────────────────────────────────────
 export async function fetchViaSerpApi() {
   if (!SERP_API_KEY) {
@@ -334,18 +324,11 @@ export async function fetchViaSerpApi() {
     return [];
   }
   const results = [];
-  // Limita a 2 queries para economizar créditos
   const queries = SERP_LINKEDIN_QUERIES.slice(0, 2);
   for (const query of queries) {
     try {
       const res = await axios.get("https://serpapi.com/search", {
-        params: {
-          engine: "google_jobs",
-          q: query,
-          hl: "en",
-          gl: "us",
-          api_key: SERP_API_KEY,
-        },
+        params: { engine: "google_jobs", q: query, hl: "en", gl: "us", api_key: SERP_API_KEY },
       });
       const jobs = res.data?.jobs_results || [];
       for (const job of jobs) {
@@ -369,8 +352,7 @@ export async function fetchViaSerpApi() {
 }
 
 // ─────────────────────────────────────────────
-// GOOGLE CUSTOM SEARCH (100 req/dia free)
-// Fallback para Wellfound, WeWorkRemotely, etc.
+// GOOGLE CUSTOM SEARCH
 // ─────────────────────────────────────────────
 export async function fetchViaGoogleCustomSearch() {
   if (!GOOGLE_API_KEY || !GOOGLE_CX) {
@@ -416,7 +398,6 @@ function extractCompany(snippet = "") {
 
 // ─────────────────────────────────────────────
 // AGREGADOR PRINCIPAL
-// Prioridade: LinkedIn Direct > JSearch > SerpAPI > Google
 // ─────────────────────────────────────────────
 export async function fetchAllJobs() {
   console.log("🔍 Fetching jobs from all sources...");
@@ -437,7 +418,6 @@ export async function fetchAllJobs() {
       fetchEuroRemoteJobs(),
     ]);
 
-  // Enriquece vagas do LinkedIn com JD completa via JSearch job-details
   const linkedInJobs = linkedInDirect.status === "fulfilled" ? linkedInDirect.value : [];
   const linkedInEnriched = await enrichLinkedInJDs(linkedInJobs);
 
@@ -473,16 +453,17 @@ export async function fetchAllJobs() {
     ...(euroRemote.status === "fulfilled" ? euroRemote.value : []),
   ];
 
-  // Deduplicar por título + empresa (case-insensitive)
+  // Dedup por título-base + empresa (ignora variantes de localização no título)
   const seen = new Set();
   const unique = all.filter((job) => {
-    const key = `${job.title?.toLowerCase().trim()}_${job.company?.toLowerCase().trim()}`;
+    const titleBase = normalizeTitleForDedup(job.title);
+    const key = `${titleBase}_${(job.company || "").toLowerCase().trim()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 
-  // FILTRO US-ONLY: Remove vagas que exigem presença nos EUA
+  // Filtro US-only
   const nonUS = unique.filter((job) => {
     if (isUSOnly(job)) {
       console.log(`  🚫 US-only filtered: "${job.title}" at ${job.company} (${job.location})`);
@@ -491,7 +472,6 @@ export async function fetchAllJobs() {
     return true;
   });
   console.log(`  ✂️  US-only filter: ${unique.length} → ${nonUS.length} jobs`);
-
   console.log(`✅ Total unique jobs fetched: ${nonUS.length}`);
   return nonUS;
 }

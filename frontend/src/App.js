@@ -3,7 +3,6 @@ import "./App.css";
 
 const API = "/api";
 
-// ─── UTILS ────────────────────────────────────────────────────────────────────
 const scoreColor = (s) => {
   if (s >= 75) return "var(--green)";
   if (s >= 55) return "var(--yellow)";
@@ -25,6 +24,29 @@ const statusColors = {
   rejected: "#EF9A9A",
   ghosted: "#90A4AE",
 };
+
+// ─── DEDUP DEFENSIVO (frontend) ──────────────────────────────────────────────
+// Last-resort guard against duplicates that slip through the backend.
+// Deduplicates by normalized(title) + normalized(company), keeping the
+// highest-score entry when two jobs collide on the same key.
+function dedupByTitleCompany(jobs) {
+  const normalize = (s = "") =>
+    s.toLowerCase()
+      .replace(/\s*[-–]\s*(crypto|web3|ai|ml|fintech|b2b|saas|remote|europe|eu|uk|usa|global|cet)[^-–]*/gi, "")
+      .replace(/\s*\([^)]*\)/g, "")
+      .replace(/[^a-z0-9]/g, "")
+      .trim();
+
+  const map = new Map();
+  for (const job of jobs) {
+    const key = `${normalize(job.title)}_${normalize(job.company)}`;
+    const existing = map.get(key);
+    if (!existing || (job.score || 0) > (existing.score || 0)) {
+      map.set(key, job);
+    }
+  }
+  return Array.from(map.values());
+}
 
 function ScoreBadge({ score, baseScore, qualityBonus }) {
   return (
@@ -83,16 +105,26 @@ function JobCard({ job, onApply, applied }) {
             </div>
           )}
 
+          {job.scoreBreakdown?.length > 0 && (
+            <div className="score-breakdown-detail">
+              {job.scoreBreakdown.map((entry, i) => (
+                <span key={i} className={entry.pts < 0 ? "breakdown-penalty" : "breakdown-positive"}>
+                  {entry.pts > 0 ? "+" : ""}{entry.pts} {entry.rule}
+                </span>
+              ))}
+            </div>
+          )}
+
           <div className="details-grid">
             {job.highlights?.length > 0 && (
               <div className="detail-block">
-                <h4>✦ Highlights</h4>
+                <h4>✶ Highlights</h4>
                 <ul>{job.highlights.map((h, i) => <li key={i}>{h}</li>)}</ul>
               </div>
             )}
             {job.matchedSkills?.length > 0 && (
               <div className="detail-block">
-                <h4>⟡ Matched Skills</h4>
+                <h4>⟟ Matched Skills</h4>
                 <div className="skill-chips">
                   {job.matchedSkills.map((s, i) => <span key={i} className="skill-chip">{s}</span>)}
                 </div>
@@ -209,7 +241,6 @@ function ApplicationRow({ app, onUpdate }) {
   );
 }
 
-// ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState("scan");
   const [scanning, setScanning] = useState(false);
@@ -306,10 +337,12 @@ export default function App() {
     setApplyModal(null);
   };
 
-  // Filtra ON_SITE que escaparam do backend, ordena por score desc
-  const jobs = (scan?.jobs || [])
-    .filter((j) => j.locationAssessment !== "ON_SITE")
-    .sort((a, b) => (b.score || 0) - (a.score || 0));
+  // Filtra ON_SITE, aplica dedup defensivo, ordena por score desc
+  const jobs = dedupByTitleCompany(
+    (scan?.jobs || [])
+      .filter((j) => j.locationAssessment !== "ON_SITE")
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+  );
 
   const filteredJobs = filterRec === "ALL"
     ? jobs
@@ -324,7 +357,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="logo">
           <span className="logo-icon">◈</span>
@@ -332,9 +364,9 @@ export default function App() {
         </div>
         <nav className="nav">
           {[
-            { id: "scan", icon: "⟡", label: "Rankings" },
+            { id: "scan", icon: "⟟", label: "Rankings" },
             { id: "applications", icon: "◎", label: "Applications" },
-            { id: "history", icon: "◷", label: "History" },
+            { id: "history", icon: "▷", label: "History" },
           ].map((n) => (
             <button
               key={n.id}
@@ -353,9 +385,7 @@ export default function App() {
         </div>
       </aside>
 
-      {/* MAIN */}
       <main className="main">
-        {/* HEADER */}
         <header className="topbar">
           <div className="topbar-title">
             {tab === "scan" && "Job Rankings"}
@@ -378,7 +408,6 @@ export default function App() {
           </div>
         </header>
 
-        {/* RANKINGS TAB */}
         {tab === "scan" && (
           <div className="tab-content">
             {jobs.length === 0 ? (
@@ -418,7 +447,6 @@ export default function App() {
           </div>
         )}
 
-        {/* APPLICATIONS TAB */}
         {tab === "applications" && (
           <div className="tab-content">
             {applications.length === 0 ? (
@@ -443,12 +471,11 @@ export default function App() {
           </div>
         )}
 
-        {/* HISTORY TAB */}
         {tab === "history" && (
           <div className="tab-content">
             {scans.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-icon">◷</div>
+                <div className="empty-icon">▷</div>
                 <h2>No scan history</h2>
                 <p>Run your first scan to start building history.</p>
               </div>
@@ -470,7 +497,6 @@ export default function App() {
         )}
       </main>
 
-      {/* APPLY MODAL */}
       {applyModal && (
         <div className="modal-overlay" onClick={() => setApplyModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -491,7 +517,6 @@ export default function App() {
         </div>
       )}
 
-      {/* TOAST */}
       {toast && (
         <div className={`toast ${toast.type}`}>{toast.msg}</div>
       )}

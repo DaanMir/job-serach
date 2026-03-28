@@ -76,6 +76,10 @@ export function isUSOnly(job) {
   return false;
 }
 
+// ─────────────────────────────────────────────
+// DEDUP HELPERS
+// ─────────────────────────────────────────────
+
 function normalizeTitleForDedup(title = "") {
   return title
     .toLowerCase()
@@ -84,9 +88,22 @@ function normalizeTitleForDedup(title = "") {
     .trim();
 }
 
+// FIX: normalise title before hashing LinkedIn IDs to reduce collisions
+// when the same job appears in multiple queries with minor title variations.
+// Uses 32-char window (was 20) for lower collision probability.
+function normalizeForId(title = "", company = "") {
+  const normalizedTitle = title
+    .toLowerCase()
+    .replace(/\s*[-–]\s*(crypto|web3|ai|ml|fintech|b2b|saas|remote|europe|eu|uk|usa|global)[^-–]*/gi, "")
+    .replace(/\s*\([^)]*\)/g, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+  const normalizedCompany = company.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+  return `${normalizedTitle}_${normalizedCompany}`;
+}
+
 // ─────────────────────────────────────────────
 // SCRAPER HEALTH WRAPPER
-// Wraps each scraper call and tracks status/count/error per source.
 // ─────────────────────────────────────────────
 async function runScraper(name, fn) {
   try {
@@ -194,8 +211,15 @@ export async function fetchLinkedInDirect() {
         const title = job.position || job.title || "";
         const url = job.jobUrl || "";
         if (!title || !url) continue;
+
+        // FIX: use normalizeForId() for stable, collision-resistant LinkedIn IDs
+        // Strips topic suffixes (- AI, - Crypto, etc.) before hashing so the same
+        // job appearing in multiple queries gets the same ID and is deduped.
+        const stableKey = normalizeForId(title, job.company || "");
+        const id = `linkedin_${Buffer.from(stableKey).toString("base64").substring(0, 32)}`;
+
         results.push({
-          id: `linkedin_${Buffer.from(title + (job.company || "")).toString("base64").substring(0, 20)}`,
+          id,
           source: "LinkedIn",
           title,
           company: job.company,
@@ -412,7 +436,6 @@ function extractCompany(snippet = "") {
 
 // ─────────────────────────────────────────────
 // AGREGADOR PRINCIPAL
-// Retorna { jobs, scraperHealth } para o server.js
 // ─────────────────────────────────────────────
 export async function fetchAllJobs() {
   console.log("🔍 Fetching jobs from all sources...");
@@ -435,7 +458,6 @@ export async function fetchAllJobs() {
     runScraper("EuroRemoteJobs", fetchEuroRemoteJobs),
   ]);
 
-  // Collect health per source (runScraper never rejects, so status is always 'fulfilled')
   const scraperHealth = {};
   for (const result of [remotive, himalayas, linkedInDirect, jsearch, serp, google, wwr, wellfound, remoteCo, workingNomads, jobspresso, euroRemote]) {
     if (result.status === "fulfilled") {
@@ -479,7 +501,6 @@ export async function fetchAllJobs() {
     return true;
   });
 
-  // Filtro US-only
   const nonUS = unique.filter((job) => {
     if (isUSOnly(job)) {
       console.log(`  🚫 US-only filtered: "${job.title}" at ${job.company} (${job.location})`);
@@ -490,7 +511,6 @@ export async function fetchAllJobs() {
   console.log(`  ✂️  US-only filter: ${unique.length} → ${nonUS.length} jobs`);
   console.log(`✅ Total unique jobs fetched: ${nonUS.length}`);
 
-  // Update LinkedIn count in scraperHealth to reflect enriched version
   if (scraperHealth["LinkedIn"]) {
     scraperHealth["LinkedIn"].count = linkedInEnriched.length;
   }

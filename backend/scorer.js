@@ -29,7 +29,6 @@ const DOMAIN_KEYWORDS = [
   { terms: ["python", "c#", ".net"], points: 2 },
 ];
 
-// Standalone AI keyword matched via regex (word boundary)
 const AI_STANDALONE_REGEX = /\bai\b/i;
 const AI_STANDALONE_POINTS = 5;
 
@@ -76,7 +75,6 @@ function calcBaseScore(job) {
   const penalties = [];
   const scoreBreakdown = [];
 
-  // 1. Título match
   for (const { terms, points } of TITLE_SCORES) {
     if (terms.some((t) => title.includes(t))) {
       score += points;
@@ -85,7 +83,6 @@ function calcBaseScore(job) {
     }
   }
 
-  // 2. Domain keywords (cap 40)
   let domainPoints = 0;
   for (const { terms, points } of DOMAIN_KEYWORDS) {
     if (terms.some((t) => text.includes(t))) {
@@ -94,7 +91,6 @@ function calcBaseScore(job) {
     }
   }
 
-  // 2b. Standalone AI keyword via regex
   if (AI_STANDALONE_REGEX.test(text)) {
     const alreadyCreditedAI = matched.some((m) =>
       ["artificial intelligence", "generative ai", "gen ai", "genai", "ai agent", "ai agents", "agentic"].includes(m)
@@ -111,37 +107,30 @@ function calcBaseScore(job) {
     scoreBreakdown.push({ rule: "domain keywords", pts: cappedDomain, matched: [...matched] });
   }
 
-  // 3. Localização — UK reduzido para 8 (igual worldwide)
   let locPts = 0;
   let locRule = "";
   if (/\beurope\b|\beuropean\b|\beu\b|\bremote.*eu\b|\bitaly\b|\bgermany\b|\bfrance\b|\bspain\b|\bnetherlands\b|\bportugal\b/.test(loc)) {
-    locPts = 15;
-    locRule = "location: EU-based";
+    locPts = 15; locRule = "location: EU-based";
   } else if (/worldwide|global|anywhere|anywhere in the world/.test(loc)) {
-    locPts = 8;
-    locRule = "location: worldwide";
+    locPts = 8; locRule = "location: worldwide";
   } else if (/uk|united kingdom|london|\bcet\b|\bcest\b/.test(loc)) {
-    locPts = 8;
-    locRule = "location: UK/CET";
+    locPts = 8; locRule = "location: UK/CET";
   }
   if (locPts > 0) {
     score += locPts;
     scoreBreakdown.push({ rule: locRule, pts: locPts });
   }
 
-  // 4. Salário informado
   if (job.salary && job.salary !== "Not specified") {
     score += 5;
     scoreBreakdown.push({ rule: "salary disclosed", pts: 5 });
   }
 
-  // 5. Seniority explícita
   if (/senior|lead|principal|head|director|vp |staff/.test(title)) {
     score += 5;
     scoreBreakdown.push({ rule: "seniority in title", pts: 5 });
   }
 
-  // 6. Penalização por relocation
   const fullText = `${desc} ${loc}`;
   const hasRelocation = RELOCATION_TERMS.some((t) => fullText.includes(t));
   if (hasRelocation) {
@@ -190,11 +179,9 @@ const USER_PROMPT = (job, baseScore, matchedKeywords, penalties) => {
   const descSection = hasDescription
     ? `Job Description:\n${job.description.substring(0, 2500)}`
     : `Job Description: NOT AVAILABLE. Return qualityBonus of 0.`;
-
   const penaltyNote = penalties.length > 0
     ? `\nNote: System already penalized -15 for: ${penalties.join(", ")}. Do NOT double-penalize.`
     : "";
-
   return `Base score already calculated: ${baseScore}/75
 Matched keywords: ${matchedKeywords.join(", ") || "none"}${penaltyNote}
 
@@ -228,7 +215,6 @@ function isBlockedTitle(titleLower) {
   return PROFILE.dealBreakers.some((term) => titleLower.includes(term.toLowerCase()));
 }
 
-// FIX: strict allowlist — no more broad 'product' fallback
 function isNotPM(titleLower) {
   const acceptedTerms = PROFILE.targetTitles.map((t) => t.toLowerCase());
   return !acceptedTerms.some((accepted) => titleLower.includes(accepted));
@@ -364,7 +350,6 @@ export async function scoreJob(job) {
 }
 
 export async function scoreAllJobs(jobs) {
-  // ─── INCREMENTAL SCAN: skip jobs already processed in previous scans ───
   const knownIds = getKnownJobIds();
   const newJobs = jobs.filter((j) => !knownIds.has(j.id));
   const cachedJobs = jobs
@@ -390,8 +375,21 @@ export async function scoreAllJobs(jobs) {
     }
   }
 
-  // Merge new scored + cached
-  const allScored = [...scored, ...cachedJobs];
+  // FIX: dedup by job.id before merging — cached jobs from multiple historical
+  // scans could produce duplicates if the same ID existed in several scans.
+  const seenIds = new Set();
+  const uniqueScored = scored.filter((j) => {
+    if (!j.id || seenIds.has(j.id)) return false;
+    seenIds.add(j.id);
+    return true;
+  });
+  const uniqueCached = cachedJobs.filter((j) => {
+    if (!j.id || seenIds.has(j.id)) return false;
+    seenIds.add(j.id);
+    return true;
+  });
+
+  const allScored = [...uniqueScored, ...uniqueCached];
 
   const filtered = allScored
     .filter((j) => j.recommendation !== "SKIP" && j.score >= 35)
@@ -405,6 +403,6 @@ export async function scoreAllJobs(jobs) {
     else dist["<35"]++;
   });
   console.log(`📊 Score distribution:`, dist);
-  console.log(`✅ ${filtered.length} relevant jobs after scoring (${cachedJobs.length} from cache)`);
+  console.log(`✅ ${filtered.length} relevant jobs after scoring (${uniqueCached.length} from cache)`);
   return filtered;
 }

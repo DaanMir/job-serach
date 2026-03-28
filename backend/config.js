@@ -57,14 +57,14 @@ export const PROFILE = {
 
   // Localização preferida
   locationPreference: "EU timezone / EU-based",
-  acceptWorldwide: true, // aceita worldwide se score for muito alto
+  acceptWorldwide: true,
 
   // Salário mínimo aceitável
   salary: {
-    contractMinPerDay: 400,    // €/dia mínimo (abaixo = red flag)
-    contractIdealPerDay: 600,  // €/dia ideal
-    permanentMinPerYear: 70000, // €/ano mínimo
-    permanentIdealPerYear: 90000, // €/ano ideal
+    contractMinPerDay: 400,
+    contractIdealPerDay: 600,
+    permanentMinPerYear: 70000,
+    permanentIdealPerYear: 90000,
   },
 
   // Deal breakers absolutos
@@ -72,6 +72,44 @@ export const PROFILE = {
     "on-site", "on site", "fully on-site", "office only",
     "no remote", "must be in office",
     "junior", "entry level", "intern",
+  ],
+};
+
+// ============================================================
+// CANDIDATE_PROFILE — usado pelo LLM scorer (scorer.js)
+// Mantenha este objeto atualizado com seu perfil real.
+// NÃO commite dados sensíveis se o repo for público —
+// mova para .env ou use placeholders genéricos.
+// ============================================================
+export const CANDIDATE_PROFILE = {
+  // Resumo de senioridade e foco
+  seniority: "Senior PM with 5+ years building AI/ML products, enterprise platforms, and multi-agent systems",
+
+  // Experiências-chave (use nomes genéricos se o repo for público)
+  highlights: [
+    "Improved production LLM accuracy from 74% to 97% for Open Finance at a major card network",
+    "Built enterprise monitoring platform generating $2M annual savings at a global telco/tech company",
+    "Built RLM Framework — personal multi-agent orchestration project with 8 specialized AI agents using Anthropic API, adopted by 23+ professionals",
+    "Built Azure DevOps MCP server reducing Feature/User Story creation from 15-20 min to ~30 seconds",
+  ],
+
+  // Stack técnico relevante para scoring
+  techStack: [
+    "Anthropic API", "LLM products", "MCP servers", "AI agents",
+    "Azure / Azure DevOps", "C# .NET", "Node.js", "Python",
+    "Grafana", "Victoria Metrics", "PromQL", "Observability tooling",
+    "Open Finance / Open Banking",
+  ],
+
+  // Restrições de localização e trabalho
+  location: "EU-based (Italy), fully remote only — cannot relocate",
+  languages: "Fluent English and Portuguese, basic Italian",
+  targetRoles: "Remote-first senior IC or lead PM roles, EU or worldwide",
+
+  // Preferências de empresa/domínio
+  domainFit: [
+    "AI-native products", "LLM platforms", "Fintech / Open Finance",
+    "Enterprise B2B SaaS", "Developer tooling", "Observability / monitoring",
   ],
 };
 

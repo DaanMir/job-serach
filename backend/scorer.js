@@ -1,6 +1,6 @@
 import Groq from "groq-sdk";
 import axios from "axios";
-import { PROFILE } from "./config.js";
+import { PROFILE, CANDIDATE_PROFILE } from "./config.js";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -11,9 +11,10 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const DOMAIN_KEYWORDS = [
   { terms: ["llm", "large language model"], points: 8 },
   { terms: ["mcp", "model context protocol"], points: 8 },
+  // FIX: use regex /\bai\b/ instead of " ai " string — catches AI-native, AI/ML, GenAI, etc.
   { terms: ["ai agent", "ai agents", "agentic"], points: 7 },
   { terms: ["machine learning", "ml platform"], points: 6 },
-  { terms: ["artificial intelligence", " ai "], points: 5 },
+  { terms: ["artificial intelligence"], points: 5 },
   { terms: ["generative ai", "gen ai", "genai"], points: 6 },
   { terms: ["open finance", "open banking"], points: 8 },
   { terms: ["fintech", "financial technology"], points: 6 },
@@ -27,6 +28,11 @@ const DOMAIN_KEYWORDS = [
   { terms: ["azure", "microsoft azure"], points: 3 },
   { terms: ["python", "c#", ".net"], points: 2 },
 ];
+
+// Standalone AI keyword matched via regex (word boundary) — separate from DOMAIN_KEYWORDS
+// to avoid string-match limitations. Adds points only once even if both regex and terms match.
+const AI_STANDALONE_REGEX = /\bai\b/i;
+const AI_STANDALONE_POINTS = 5;
 
 const TITLE_SCORES = [
   { terms: ["head of product", "vp of product", "vp product"], points: 12 },
@@ -52,6 +58,8 @@ const RELOCATION_TERMS = [
   "no visa sponsorship",
   "right to work required",
   "must have right to work",
+  "right to work in the uk",
+  "right to work in uk",
   "local candidates only",
   "candidates must be based in",
   "must be based in",
@@ -68,11 +76,13 @@ function calcBaseScore(job) {
   let score = 0;
   const matched = [];
   const penalties = [];
+  const scoreBreakdown = [];
 
   // 1. Título match
   for (const { terms, points } of TITLE_SCORES) {
     if (terms.some((t) => title.includes(t))) {
       score += points;
+      scoreBreakdown.push({ rule: `title: ${terms[0]}`, pts: points });
       break;
     }
   }
@@ -85,25 +95,55 @@ function calcBaseScore(job) {
       matched.push(terms[0]);
     }
   }
-  score += Math.min(domainPoints, 40);
+
+  // 2b. Standalone AI keyword (regex, word-boundary safe)
+  if (AI_STANDALONE_REGEX.test(text)) {
+    // Only add if not already credited via "artificial intelligence" or "generative ai"
+    const alreadyCreditedAI = matched.some((m) =>
+      ["artificial intelligence", "generative ai", "gen ai", "genai", "ai agent", "ai agents", "agentic"].includes(m)
+    );
+    if (!alreadyCreditedAI) {
+      domainPoints += AI_STANDALONE_POINTS;
+      matched.push("ai (standalone)");
+    }
+  }
+
+  const cappedDomain = Math.min(domainPoints, 40);
+  score += cappedDomain;
+  if (cappedDomain > 0) {
+    scoreBreakdown.push({ rule: "domain keywords", pts: cappedDomain, matched });
+  }
 
   // 3. Localização
+  // FIX: UK bônus reduzido para 8 (igual worldwide) — UK frequentemente exige right to work
+  let locPts = 0;
+  let locRule = "";
   if (/\beurope\b|\beuropean\b|\beu\b|\bremote.*eu\b|\bitaly\b|\bgermany\b|\bfrance\b|\bspain\b|\bnetherlands\b|\bportugal\b/.test(loc)) {
-    score += 15;
+    locPts = 15;
+    locRule = "location: EU-based";
   } else if (/worldwide|global|anywhere|anywhere in the world/.test(loc)) {
-    score += 8;
+    locPts = 8;
+    locRule = "location: worldwide";
   } else if (/uk|united kingdom|london|\bcet\b|\bcest\b/.test(loc)) {
-    score += 10;
+    // UK: same as worldwide (8) — UK roles often require right to work, which triggers -15 separately
+    locPts = 8;
+    locRule = "location: UK/CET";
+  }
+  if (locPts > 0) {
+    score += locPts;
+    scoreBreakdown.push({ rule: locRule, pts: locPts });
   }
 
   // 4. Salário informado
   if (job.salary && job.salary !== "Not specified") {
     score += 5;
+    scoreBreakdown.push({ rule: "salary disclosed", pts: 5 });
   }
 
   // 5. Seniority explícita
   if (/senior|lead|principal|head|director|vp |staff/.test(title)) {
     score += 5;
+    scoreBreakdown.push({ rule: "seniority in title", pts: 5 });
   }
 
   // 6. Penalização por relocation / restrição de residência
@@ -112,12 +152,14 @@ function calcBaseScore(job) {
   if (hasRelocation) {
     score -= 15;
     penalties.push("relocation");
+    scoreBreakdown.push({ rule: "penalty: relocation/residency", pts: -15 });
   }
 
   return {
     baseScore: Math.max(0, Math.min(score, 75)),
     matchedKeywords: matched,
     penalties,
+    scoreBreakdown,
   };
 }
 
@@ -125,7 +167,9 @@ function calcBaseScore(job) {
 // CAMADA 2 — LLM qualityBonus (0-25)
 // ─────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a job fit evaluator. Your ONLY job is to assess qualitative fit between a job and a candidate profile, and return a quality bonus score.
+function buildSystemPrompt() {
+  const cp = CANDIDATE_PROFILE;
+  return `You are a job fit evaluator. Your ONLY job is to assess qualitative fit between a job and a candidate profile, and return a quality bonus score.
 
 The base score has ALREADY been calculated by the system based on keyword matching and location.
 You must return a qualityBonus between 0-25 based on:
@@ -135,13 +179,16 @@ You must return a qualityBonus between 0-25 based on:
 - Red flags not caught by keyword matching (e.g. requires specific certifications, language requirements, relocation)
 
 Candidate background:
-- Senior PM with AI/ML products, Open Finance (Mastercard), Enterprise monitoring (NTT Data/AmbevTech)
-- Built multi-agent LLM frameworks and MCP servers independently
-- EU-based (Italy), fluent English and Portuguese, basic Italian
-- Looking for remote-first, senior IC or lead roles
-- Cannot relocate — fully remote only
+- ${cp.seniority}
+- Key achievements: ${cp.highlights.join("; ")}
+- Tech stack: ${cp.techStack.join(", ")}
+- Location: ${cp.location}
+- Languages: ${cp.languages}
+- Target: ${cp.targetRoles}
+- Domain fit: ${cp.domainFit.join(", ")}
 
 You MUST respond ONLY with valid JSON, no markdown, no explanation.`;
+}
 
 const USER_PROMPT = (job, baseScore, matchedKeywords, penalties) => {
   const hasDescription = job.description && job.description.length > 100;
@@ -186,11 +233,13 @@ function isBlockedTitle(titleLower) {
   return PROFILE.dealBreakers.some((term) => titleLower.includes(term.toLowerCase()));
 }
 
+// FIX: strict allowlist-based PM check — removes broad 'product' fallback
+// that was passing Product Marketing, Product Designer, Product Analyst, etc.
 function isNotPM(titleLower) {
-  const isPM = PROFILE.targetTitles.some((t) =>
-    titleLower.includes(t.toLowerCase().split(" ").slice(-1)[0])
-  );
-  return !isPM && !titleLower.includes("product");
+  // Normalize targetTitles to lowercase for comparison
+  const acceptedTerms = PROFILE.targetTitles.map((t) => t.toLowerCase());
+  // Check if any accepted title is a substring of the job title
+  return !acceptedTerms.some((accepted) => titleLower.includes(accepted));
 }
 
 function isOnSite(job) {
@@ -202,12 +251,13 @@ function isOnSite(job) {
 }
 
 async function callLLMWithRetry(job, baseScore, matchedKeywords, penalties, maxRetries = 3) {
+  const systemPrompt = buildSystemPrompt();
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const chat = await groq.chat.completions.create({
         model: "llama-3.1-8b-instant",
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           { role: "user", content: USER_PROMPT(job, baseScore, matchedKeywords, penalties) },
         ],
         temperature: 0.1,
@@ -264,7 +314,9 @@ export async function scoreJob(job) {
       ...job, score: 0, recommendation: "SKIP", matchedSkills: [], highlights: [],
       redFlags: ["Title contains deal-breaker term"], salaryAssessment: "UNKNOWN",
       locationAssessment: "UNKNOWN", seniorityMatch: "UNDERQUALIFIED",
-      summary: "Automatically filtered: junior or blocked title.", scored: true,
+      summary: "Automatically filtered: junior or blocked title.",
+      scoreBreakdown: [{ rule: "blocked title", pts: 0 }],
+      scored: true,
     };
   }
 
@@ -275,7 +327,9 @@ export async function scoreJob(job) {
       ...job, score: 0, recommendation: "SKIP", matchedSkills: [], highlights: [],
       redFlags: ["On-site or office-only role"], salaryAssessment: "UNKNOWN",
       locationAssessment: "ON_SITE", seniorityMatch: "UNKNOWN",
-      summary: "Automatically filtered: on-site or office-only position.", scored: true,
+      summary: "Automatically filtered: on-site or office-only position.",
+      scoreBreakdown: [{ rule: "on-site filtered", pts: 0 }],
+      scored: true,
     };
   }
 
@@ -288,14 +342,13 @@ export async function scoreJob(job) {
     }
   }
 
-  const { baseScore, matchedKeywords, penalties } = calcBaseScore(enrichedJob);
+  const { baseScore, matchedKeywords, penalties, scoreBreakdown } = calcBaseScore(enrichedJob);
   const llmResult = await callLLMWithRetry(enrichedJob, baseScore, matchedKeywords, penalties);
 
   const qualityBonus = llmResult?.qualityBonus ?? 0;
   const finalScore = Math.min(baseScore + qualityBonus, 100);
   const recommendation = calcRecommendation(finalScore);
 
-  // Adiciona relocation ao redFlags se penalizado
   const autoRedFlags = penalties.includes("relocation")
     ? ["Relocation or residency requirement detected"]
     : [];
@@ -313,6 +366,7 @@ export async function scoreJob(job) {
     locationAssessment: llmResult?.locationAssessment ?? "UNKNOWN",
     seniorityMatch: llmResult?.seniorityMatch ?? "UNKNOWN",
     summary: llmResult?.summary ?? "",
+    scoreBreakdown,
     scored: true,
   };
 }

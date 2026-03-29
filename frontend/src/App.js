@@ -25,10 +25,7 @@ const statusColors = {
   ghosted: "#90A4AE",
 };
 
-// ─── DEDUP DEFENSIVO (frontend) ──────────────────────────────────────────────
-// Last-resort guard against duplicates that slip through the backend.
-// Deduplicates by normalized(title) + normalized(company), keeping the
-// highest-score entry when two jobs collide on the same key.
+// ─── DEDUP DEFENSIVO (frontend) ──────────────────────────────
 function dedupByTitleCompany(jobs) {
   const normalize = (s = "") =>
     s.toLowerCase()
@@ -46,6 +43,24 @@ function dedupByTitleCompany(jobs) {
     }
   }
   return Array.from(map.values());
+}
+
+// ─── URL LIVENESS CHECK (frontend, lazy) ───────────────────────────
+// Called only when a card is expanded, so we don't hammer every URL on render.
+// Returns true if the URL is dead (404/410/error), false if alive.
+// Uses a no-cors fetch which only tells us whether the request reached the server
+// at all — combined with backend validation this is a belt-and-suspenders check.
+async function isUrlDead(url) {
+  if (!url) return true;
+  try {
+    const res = await fetch(url, { method: "HEAD", mode: "no-cors", signal: AbortSignal.timeout(5000) });
+    // no-cors always returns opaque (type==='opaque'), status=0.
+    // We can't read the status. If it resolved without throwing, the server is reachable.
+    // We only mark as dead if the fetch itself throws (network error, timeout, CORS block on redirect).
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function ScoreBadge({ score, baseScore, qualityBonus }) {
@@ -68,11 +83,24 @@ function ScoreBadge({ score, baseScore, qualityBonus }) {
 
 function JobCard({ job, onApply, applied }) {
   const [expanded, setExpanded] = useState(false);
+  // urlDead: null = unchecked, true = dead, false = alive
+  const [urlDead, setUrlDead] = useState(job.urlStatus === "dead" ? true : null);
   const rec = recLabel[job.recommendation] || recLabel.CONSIDER;
 
+  const handleExpand = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    // Lazy URL check: only run once on first expand, and only for jobs
+    // that weren't already validated at scrape time (urlStatus not set).
+    if (next && urlDead === null && job.url) {
+      const dead = await isUrlDead(job.url);
+      setUrlDead(dead);
+    }
+  };
+
   return (
-    <div className={`job-card ${expanded ? "expanded" : ""}`}>
-      <div className="job-card-header" onClick={() => setExpanded(!expanded)}>
+    <div className={`job-card ${expanded ? "expanded" : ""} ${urlDead ? "url-dead" : ""}`}>
+      <div className="job-card-header" onClick={handleExpand}>
         <ScoreBadge score={job.score || 0} baseScore={job.baseScore} qualityBonus={job.qualityBonus} />
         <div className="job-meta">
           <div className="job-title">{job.title}</div>
@@ -82,6 +110,9 @@ function JobCard({ job, onApply, applied }) {
             <span className="tag" style={{ color: rec.color, borderColor: rec.color }}>
               {rec.label}
             </span>
+            {urlDead && (
+              <span className="tag tag-dead">Vaga expirada</span>
+            )}
             {job.locationAssessment && (
               <span className="tag tag-loc">{job.locationAssessment.replace("_", " ")}</span>
             )}
@@ -95,6 +126,12 @@ function JobCard({ job, onApply, applied }) {
 
       {expanded && (
         <div className="job-details">
+          {urlDead && (
+            <div className="url-dead-banner">
+              ⚠️ Esta vaga não está mais disponível. O link original retornou 404.
+            </div>
+          )}
+
           {job.summary && <p className="job-summary">{job.summary}</p>}
 
           {job.baseScore != null && (
@@ -139,11 +176,17 @@ function JobCard({ job, onApply, applied }) {
           </div>
 
           <div className="job-card-footer">
-            <a href={job.url} target="_blank" rel="noreferrer" className="btn btn-outline">
-              View Job ↗
-            </a>
+            {urlDead ? (
+              <span className="btn btn-outline btn-disabled" title="Link inativo">
+                Vaga expirada ✕
+              </span>
+            ) : (
+              <a href={job.url} target="_blank" rel="noreferrer" className="btn btn-outline">
+                View Job ↗
+              </a>
+            )}
             {!applied ? (
-              <button className="btn btn-primary" onClick={() => onApply(job)}>
+              <button className="btn btn-primary" onClick={() => onApply(job)} disabled={urlDead}>
                 Mark as Applied ✓
               </button>
             ) : (
@@ -337,7 +380,6 @@ export default function App() {
     setApplyModal(null);
   };
 
-  // Filtra ON_SITE, aplica dedup defensivo, ordena por score desc
   const jobs = dedupByTitleCompany(
     (scan?.jobs || [])
       .filter((j) => j.locationAssessment !== "ON_SITE")

@@ -1,4 +1,4 @@
-/* ── DESIGN SYSTEM ─────────────────────────────────────────────────────────── */
+/* ── DESIGN SYSTEM ─────────────────────────────────────────────────────────────────────────── */
 :root {
   --bg: #0a0a0f;
   --surface: #0f0f1a;
@@ -26,10 +26,10 @@ body {
   min-height: 100vh;
 }
 
-/* ── LAYOUT ─────────────────────────────────────────────────────────────────── */
+/* ── LAYOUT ────────────────────────────────────────────────────────────────────────────── */
 .app { display: flex; height: 100vh; overflow: hidden; }
 
-/* ── SIDEBAR ────────────────────────────────────────────────────────────────── */
+/* ── SIDEBAR ───────────────────────────────────────────────────────────────────────────── */
 .sidebar {
   width: 200px;
   background: var(--surface);
@@ -105,10 +105,10 @@ body {
 .stat-item span { font-size: 18px; font-weight: 800; font-family: var(--mono); }
 .stat-item label { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; }
 
-/* ── MAIN ───────────────────────────────────────────────────────────────────── */
+/* ── MAIN ─────────────────────────────────────────────────────────────────────────────── */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
-/* ── TOPBAR ─────────────────────────────────────────────────────────────────── */
+/* ── TOPBAR ───────────────────────────────────────────────────────────────────────────── */
 .topbar {
   display: flex;
   align-items: center;
@@ -128,7 +128,7 @@ body {
 .topbar-right { display: flex; align-items: center; gap: 14px; }
 .last-scan { font-size: 12px; color: var(--muted); font-family: var(--mono); }
 
-/* ── BUTTONS ────────────────────────────────────────────────────────────────── */
+/* ── BUTTONS ──────────────────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -167,6 +167,14 @@ body {
 
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 
+.btn-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+  border-color: var(--red)44;
+  color: var(--red);
+}
+
 .btn.loading { opacity: 0.8; }
 
 .spinner {
@@ -180,14 +188,14 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── TAB CONTENT ────────────────────────────────────────────────────────────── */
+/* ── TAB CONTENT ─────────────────────────────────────────────────────────────────────────── */
 .tab-content {
   flex: 1;
   overflow-y: auto;
   padding: 24px 28px;
 }
 
-/* ── FILTER BAR ─────────────────────────────────────────────────────────────── */
+/* ── FILTER BAR ──────────────────────────────────────────────────────────────────────────── */
 .filter-bar {
   display: flex;
   gap: 8px;
@@ -220,7 +228,7 @@ body {
   font-size: 11px;
 }
 
-/* ── JOB CARDS ──────────────────────────────────────────────────────────────── */
+/* ── JOB CARDS ──────────────────────────────────────────────────────────────────────────── */
 .jobs-list { display: flex; flex-direction: column; gap: 10px; }
 
 .job-card {
@@ -232,6 +240,8 @@ body {
 }
 .job-card:hover { border-color: #2e2e50; }
 .job-card.expanded { border-color: var(--accent)44; }
+.job-card.url-dead { opacity: 0.65; }
+.job-card.url-dead .job-title { text-decoration: line-through; text-decoration-color: var(--red)66; }
 
 .job-card-header {
   display: flex;
@@ -276,6 +286,12 @@ body {
 .tag-source { color: var(--accent); border-color: var(--accent)44; }
 .tag-salary { color: var(--green); border-color: var(--green)44; }
 .tag-loc { border-color: var(--border); }
+.tag-dead {
+  color: var(--red);
+  border-color: var(--red)55;
+  background: var(--red)10;
+  font-weight: 600;
+}
 
 .expand-icon { color: var(--muted); font-size: 12px; }
 
@@ -285,7 +301,52 @@ body {
   padding-top: 16px;
 }
 
+/* URL dead banner */
+.url-dead-banner {
+  background: var(--red)12;
+  border: 1px solid var(--red)44;
+  border-radius: 6px;
+  color: var(--red);
+  font-size: 13px;
+  padding: 8px 14px;
+  margin-bottom: 14px;
+}
+
 .job-summary { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.6; }
+
+/* score breakdown */
+.score-breakdown {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.score-breakdown strong { color: var(--text); }
+
+.score-breakdown-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.breakdown-positive {
+  font-size: 11px;
+  font-family: var(--mono);
+  background: var(--green)12;
+  color: var(--green);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.breakdown-penalty {
+  font-size: 11px;
+  font-family: var(--mono);
+  background: var(--red)12;
+  color: var(--red);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
 
 .details-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px; }
 
@@ -308,7 +369,7 @@ body {
 .job-card-footer { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
 .applied-badge { font-size: 13px; color: var(--green); font-weight: 700; }
 
-/* ── APPLICATIONS ────────────────────────────────────────────────────────────── */
+/* ── APPLICATIONS ───────────────────────────────────────────────────────────────────────── */
 .apps-list { display: flex; flex-direction: column; gap: 2px; }
 
 .apps-header {
@@ -389,7 +450,7 @@ body {
 .jd-preview p, .jd-preview li { font-size: 13px; color: var(--text); }
 .jd-text { font-size: 12px; color: var(--muted); font-family: var(--mono); white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
 
-/* ── HISTORY ────────────────────────────────────────────────────────────────── */
+/* ── HISTORY ────────────────────────────────────────────────────────────────────────────── */
 .history-list { display: flex; flex-direction: column; gap: 8px; }
 .history-card {
   display: flex;
@@ -408,7 +469,7 @@ body {
 .history-count span { font-size: 28px; }
 .history-arrow { color: var(--muted); font-size: 18px; }
 
-/* ── EMPTY STATE ────────────────────────────────────────────────────────────── */
+/* ── EMPTY STATE ─────────────────────────────────────────────────────────────────────────── */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -422,7 +483,7 @@ body {
 .empty-state h2 { font-size: 22px; font-weight: 800; color: var(--muted); }
 .empty-state p { font-size: 14px; color: var(--muted); }
 
-/* ── MODAL ──────────────────────────────────────────────────────────────────── */
+/* ── MODAL ────────────────────────────────────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -446,7 +507,7 @@ body {
 .modal-job strong { color: var(--text); }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
 
-/* ── TOAST ──────────────────────────────────────────────────────────────────── */
+/* ── TOAST ────────────────────────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed;
   bottom: 24px;
@@ -469,7 +530,7 @@ body {
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* ── SCROLLBAR ──────────────────────────────────────────────────────────────── */
+/* ── SCROLLBAR ──────────────────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }

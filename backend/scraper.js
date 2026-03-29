@@ -88,9 +88,6 @@ function normalizeTitleForDedup(title = "") {
     .trim();
 }
 
-// FIX: normalise title before hashing LinkedIn IDs to reduce collisions
-// when the same job appears in multiple queries with minor title variations.
-// Uses 32-char window (was 20) for lower collision probability.
 function normalizeForId(title = "", company = "") {
   const normalizedTitle = title
     .toLowerCase()
@@ -100,6 +97,78 @@ function normalizeForId(title = "", company = "") {
     .trim();
   const normalizedCompany = company.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
   return `${normalizedTitle}_${normalizedCompany}`;
+}
+
+// ─────────────────────────────────────────────
+// URL VALIDATION
+// Only applied to sources that build synthetic URLs from slugs.
+// Sources with canonical URLs (Remotive, LinkedIn, JSearch, SerpAPI)
+// are skipped — their URLs come directly from the data.
+// Permissive: only 404 and 410 are treated as dead.
+// HEAD fallback: retries with GET if server returns 405 (Method Not Allowed).
+// ─────────────────────────────────────────────
+
+async function checkUrl(url) {
+  if (!url) return "dead";
+  try {
+    const res = await axios.head(url, {
+      timeout: 6000,
+      maxRedirects: 5,
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; JobScout/1.0)" },
+      validateStatus: () => true, // never throw on HTTP errors
+    });
+    if (res.status === 405) {
+      // Server doesn't allow HEAD — retry with GET
+      const getRes = await axios.get(url, {
+        timeout: 6000,
+        maxRedirects: 5,
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; JobScout/1.0)" },
+        validateStatus: () => true,
+        responseType: "stream", // don't download body
+      });
+      getRes.data?.destroy?.(); // close stream immediately
+      return getRes.status === 404 || getRes.status === 410 ? "dead" : "ok";
+    }
+    return res.status === 404 || res.status === 410 ? "dead" : "ok";
+  } catch {
+    // Connection error, timeout, DNS failure — treat as dead
+    return "dead";
+  }
+}
+
+// Run URL checks in parallel with a concurrency limit.
+async function validateJobUrls(jobs, sourceName) {
+  const CONCURRENCY = 5;
+  const results = new Map();
+  const queue = [...jobs];
+  const inFlight = [];
+
+  async function processNext() {
+    if (queue.length === 0) return;
+    const job = queue.shift();
+    const status = await checkUrl(job.url);
+    results.set(job.id, status);
+  }
+
+  // Fill initial batch
+  for (let i = 0; i < Math.min(CONCURRENCY, jobs.length); i++) {
+    inFlight.push(processNext());
+  }
+
+  // Process remaining queue
+  while (queue.length > 0) {
+    await Promise.race(inFlight);
+    inFlight.push(processNext());
+  }
+  await Promise.all(inFlight);
+
+  const dead = jobs.filter((j) => results.get(j.id) === "dead");
+  if (dead.length > 0) {
+    console.log(`  🔗 [url-check] ${dead.length} dead link(s) filtered from ${sourceName}:`);
+    dead.forEach((j) => console.log(`    ✗ ${j.title} @ ${j.company} — ${j.url}`));
+  }
+
+  return jobs.filter((j) => results.get(j.id) !== "dead");
 }
 
 // ─────────────────────────────────────────────
@@ -212,9 +281,6 @@ export async function fetchLinkedInDirect() {
         const url = job.jobUrl || "";
         if (!title || !url) continue;
 
-        // FIX: use normalizeForId() for stable, collision-resistant LinkedIn IDs
-        // Strips topic suffixes (- AI, - Crypto, etc.) before hashing so the same
-        // job appearing in multiple queries gets the same ID and is deduped.
         const stableKey = normalizeForId(title, job.company || "");
         const id = `linkedin_${Buffer.from(stableKey).toString("base64").substring(0, 32)}`;
 
@@ -282,7 +348,7 @@ export async function enrichLinkedInJDs(linkedInJobs) {
         enriched.set(job.id, details.job_description.substring(0, 3000));
         console.log(`    ✓ Got JD for "${job.title}" at ${job.company}`);
       }
-    } catch (e) {
+    } catch {
       // Silencioso
     }
     await new Promise((r) => setTimeout(r, 400));
@@ -469,26 +535,41 @@ export async function fetchAllJobs() {
   const linkedInJobs = linkedInDirect.status === "fulfilled" ? linkedInDirect.value.jobs : [];
   const linkedInEnriched = await enrichLinkedInJDs(linkedInJobs);
 
+  // URL validation for sources that build synthetic URLs from slugs.
+  // Sources with canonical URLs (Remotive, LinkedIn, JSearch, SerpAPI, Google)
+  // are intentionally skipped — their URLs come directly from the data source.
+  console.log("🔗 Validating URLs for slug-based sources...");
+  const [himaJobs, wwrJobs, wellfoundJobs, remoteCoJobs, workingNomadsJobs, jobspressoJobs, euroRemoteJobs] =
+    await Promise.all([
+      himalayas.value?.jobs?.length ? validateJobUrls(himalayas.value.jobs, "Himalayas") : Promise.resolve([]),
+      wwr.value?.jobs?.length ? validateJobUrls(wwr.value.jobs, "WeWorkRemotely") : Promise.resolve([]),
+      wellfound.value?.jobs?.length ? validateJobUrls(wellfound.value.jobs, "Wellfound") : Promise.resolve([]),
+      remoteCo.value?.jobs?.length ? validateJobUrls(remoteCo.value.jobs, "Remote.co") : Promise.resolve([]),
+      workingNomads.value?.jobs?.length ? validateJobUrls(workingNomads.value.jobs, "WorkingNomads") : Promise.resolve([]),
+      jobspresso.value?.jobs?.length ? validateJobUrls(jobspresso.value.jobs, "Jobspresso") : Promise.resolve([]),
+      euroRemote.value?.jobs?.length ? validateJobUrls(euroRemote.value.jobs, "EuroRemoteJobs") : Promise.resolve([]),
+    ]);
+
   const sourceSummary = {};
   for (const [key, val] of Object.entries(scraperHealth)) {
     sourceSummary[key] = val.count;
   }
   sourceSummary["LinkedIn w/ JD"] = linkedInEnriched.filter((j) => j.description?.length > 100).length;
-  console.log("📊 Jobs per source:", sourceSummary);
+  console.log("📊 Jobs per source (before URL filter):", sourceSummary);
 
   const all = [
     ...(remotive.value?.jobs || []),
-    ...(himalayas.value?.jobs || []),
+    ...himaJobs,
     ...linkedInEnriched,
     ...(jsearch.value?.jobs || []),
     ...(serp.value?.jobs || []),
     ...(google.value?.jobs || []),
-    ...(wwr.value?.jobs || []),
-    ...(wellfound.value?.jobs || []),
-    ...(remoteCo.value?.jobs || []),
-    ...(workingNomads.value?.jobs || []),
-    ...(jobspresso.value?.jobs || []),
-    ...(euroRemote.value?.jobs || []),
+    ...wwrJobs,
+    ...wellfoundJobs,
+    ...remoteCoJobs,
+    ...workingNomadsJobs,
+    ...jobspressoJobs,
+    ...euroRemoteJobs,
   ];
 
   // Dedup por título-base + empresa

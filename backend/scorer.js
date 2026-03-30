@@ -2,6 +2,7 @@ import Groq from "groq-sdk";
 import axios from "axios";
 import { PROFILE, CANDIDATE_PROFILE } from "./config.js";
 import { getKnownJobIds, getCachedJob } from "./storage.js";
+import { getCachedScoredJob, setCachedScoredJob } from "./utils/cache.js";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -285,6 +286,13 @@ async function fetchJobDescription(url) {
 }
 
 export async function scoreJob(job) {
+  // Verificar cache primeiro
+  const cached = getCachedScoredJob(job.id);
+  if (cached) {
+    console.log(`[cache] Usando cache para "${job.title}"`);
+    return cached;
+  }
+
   const titleLower = job.title?.toLowerCase() || "";
 
   if (isBlockedTitle(titleLower)) {
@@ -331,7 +339,7 @@ export async function scoreJob(job) {
     ? ["Relocation or residency requirement detected"]
     : [];
 
-  return {
+  const result = {
     ...enrichedJob,
     score: finalScore,
     baseScore,
@@ -347,6 +355,9 @@ export async function scoreJob(job) {
     scoreBreakdown,
     scored: true,
   };
+
+  setCachedScoredJob(job.id, result);
+  return result;
 }
 
 export async function scoreAllJobs(jobs) {

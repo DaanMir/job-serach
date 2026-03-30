@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { validateJob, validateApplication } from './utils/validator.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = join(__dirname, "data.json");
@@ -109,7 +110,17 @@ export function getCachedJob(id) {
 export function saveScannedJobs(jobs) {
   const db = loadDB();
 
-  const sortedJobs = [...jobs].sort((a, b) => (b.score || 0) - (a.score || 0));
+  const validatedJobs = [];
+  for (const job of jobs) {
+    const validation = validateJob(job);
+    if (validation.valid) {
+      validatedJobs.push(validation.data);
+    } else {
+      console.warn(`Job validation failed: ${validation.error}`);
+    }
+  }
+
+  const sortedJobs = [...validatedJobs].sort((a, b) => (b.score || 0) - (a.score || 0));
 
   const scan = {
     id: Date.now(),
@@ -145,11 +156,17 @@ export function getScanById(id) {
 
 export function saveApplication(application) {
   const db = loadDB();
+  
+  const validation = validateApplication(application);
+  if (!validation.valid) {
+    console.warn(`Application validation failed: ${validation.error}`);
+  }
+
   const app = {
     id: Date.now(),
     appliedAt: new Date().toISOString(),
     status: "applied",
-    ...application,
+    ...(validation.valid ? validation.data : application),
   };
   db.applications.unshift(app);
   saveDB(db);

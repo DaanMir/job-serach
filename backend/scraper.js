@@ -1,5 +1,6 @@
 import axios from "axios";
-import { SERP_LINKEDIN_QUERIES } from "./config.js";
+import { SERP_LINKEDIN_QUERIES, LINKEDIN_SEARCH_QUERIES, LINKEDIN_JOBS_PER_QUERY, JSEARCH_QUERIES, JSEARCH_OPTIONS } from "./config.js";
+import { withRetry } from "./utils/retry.js";
 import fetchWWR from "./scrapers/weworkremotely.js";
 import fetchWellfound from "./scrapers/wellfound.js";
 import fetchRemoteCo from "./scrapers/remote-co.js";
@@ -57,14 +58,14 @@ export function isUSOnly(job) {
   return false;
 }
 
-function normalizeTitleForDedup(title = "") {
+export function normalizeTitleForDedup(title = "") {
   return title.toLowerCase()
     .replace(/\s*\([^)]*\)/g, "")
     .replace(/\s*[-–]\s*(remote|worldwide|global|eu|europe|uk|usa|germany|france|spain|ireland|portugal|italy|netherlands)[^-–]*/gi, "")
     .trim();
 }
 
-function normalizeForId(title = "", company = "") {
+export function normalizeForId(title = "", company = "") {
   const t = title.toLowerCase()
     .replace(/\s*[-–]\s*(crypto|web3|ai|ml|fintech|b2b|saas|remote|europe|eu|uk|usa|global)[^-–]*/gi, "")
     .replace(/\s*\([^)]*\)/g, "").replace(/[^a-z0-9]/g, "").trim();
@@ -108,7 +109,11 @@ async function validateJobUrls(jobs, sourceName) {
 
 async function runScraper(name, fn) {
   try {
-    const results = await fn();
+    const results = await withRetry(fn, { 
+      maxRetries: 2, 
+      baseDelay: 1500,
+      context: name 
+    });
     const count = Array.isArray(results) ? results.length : 0;
     return { jobs: results || [], health: { source: name, status: count > 0 ? "ok" : "empty", count, error: null } };
   } catch (err) {
@@ -164,15 +169,6 @@ function buildLinkedInSearchUrl(keywords, location = "") {
   return `https://www.linkedin.com/jobs/search/?${params.toString()}`;
 }
 
-const LINKEDIN_SEARCH_QUERIES = [
-  { keywords: "Senior Product Manager AI LLM",       location: "Europe" },
-  { keywords: "Head of Product AI fintech",           location: "Europe" },
-  { keywords: "Technical Product Manager AI agents",  location: "Europe" },
-  { keywords: "Lead Product Manager enterprise B2B",  location: "Worldwide" },
-  { keywords: "Principal Product Manager AI ML",      location: "Europe" },
-  { keywords: "Senior Product Manager open finance",  location: "Europe" },
-];
-
 export async function fetchLinkedInViaApify() {
   if (!APIFY_TOKEN) {
     console.warn("⚠️  APIFY_TOKEN not set — LinkedIn scraping disabled.");
@@ -182,9 +178,9 @@ export async function fetchLinkedInViaApify() {
   const searchUrls = LINKEDIN_SEARCH_QUERIES.map((q) => buildLinkedInSearchUrl(q.keywords, q.location));
 
   const input = {
-    urls: searchUrls,    // REQUIRED — confirmed field name from input-schema
-    count: 20,           // optional — confirmed field name
-    scrapeCompany: false, // skip company details to save credits
+    urls: searchUrls,
+    count: LINKEDIN_JOBS_PER_QUERY,
+    scrapeCompany: false,
   };
 
   try {
@@ -261,17 +257,17 @@ export async function enrichLinkedInJDs(linkedInJobs) {
 export async function fetchJSearch() {
   if (!JSEARCH_API_KEY) { console.warn("JSEARCH_API_KEY not set, skipping JSearch"); return []; }
   const results = [];
-  for (const query of [
-    "Senior Product Manager AI remote Europe",
-    "Head of Product LLM fintech remote",
-    "Technical Product Manager AI agents remote EU",
-    "Lead Product Manager enterprise B2B remote",
-    "Principal Product Manager AI ML remote",
-    "Group Product Manager fintech payments remote Europe",
-  ]) {
+  for (const query of JSEARCH_QUERIES) {
     try {
       const res = await axios.get("https://jsearch.p.rapidapi.com/search", {
-        params: { query, page: "1", num_pages: "1", date_posted: "month", remote_jobs_only: "true", employment_types: "FULLTIME,CONTRACTOR" },
+        params: { 
+          query, 
+          page: "1", 
+          num_pages: String(JSEARCH_OPTIONS.pagesPerQuery), 
+          date_posted: JSEARCH_OPTIONS.datePosted, 
+          remote_jobs_only: String(JSEARCH_OPTIONS.remoteJobsOnly), 
+          employment_types: JSEARCH_OPTIONS.employmentTypes 
+        },
         headers: { "X-RapidAPI-Key": JSEARCH_API_KEY, "X-RapidAPI-Host": "jsearch.p.rapidapi.com" },
       });
       for (const job of (res.data?.data || [])) {

@@ -12,12 +12,22 @@ import {
   updateApplication,
   getAllApplications,
 } from "./storage.js";
+import { printEnvStatus } from "./utils/env.validator.js";
 
 const app = express();
-app.use(cors());
+const CORS_OPTIONS = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://seudominio.com'] 
+    : ['http://localhost:3000', 'http://localhost:5173'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type'],
+};
+
+app.use(cors(CORS_OPTIONS));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
+printEnvStatus();
 
 // Track per-source scraper health across the last scan
 let lastScraperHealth = {};

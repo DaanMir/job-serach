@@ -130,3 +130,62 @@ export const SERP_LINKEDIN_QUERIES = [
   "Technical Product Manager fintech open finance remote Europe",
   "Lead Product Manager enterprise B2B remote EU",
 ];
+
+// ============================================================
+// Queries do LinkedIn via Apify
+// Movidas para cá para facilitar configuração
+// ============================================================
+export const LINKEDIN_SEARCH_QUERIES = [
+  { keywords: "Senior Product Manager AI LLM", location: "Europe" },
+  { keywords: "Head of Product AI fintech", location: "Europe" },
+  { keywords: "Technical Product Manager AI agents", location: "Europe" },
+  { keywords: "Lead Product Manager enterprise B2B", location: "Worldwide" },
+  { keywords: "Principal Product Manager AI ML", location: "Europe" },
+  { keywords: "Senior Product Manager open finance", location: "Europe" },
+  { keywords: "Group Product Manager AI", location: "Europe" },
+  { keywords: "Staff Product Manager fintech", location: "Worldwide" },
+  { keywords: "Product Manager MCP", location: "Europe" },
+  { keywords: "VP of Product AI startup", location: "Europe" },
+  { keywords: "Director of Product AI platform", location: "Europe" },
+  { keywords: "Senior Technical Product Manager API", location: "Europe" },
+  { keywords: "AI Product Manager LLM agents", location: "Worldwide" },
+  { keywords: "Lead Product Manager payments fintech", location: "Europe" },
+  { keywords: "Principal Product Manager observability", location: "Worldwide" },
+  { keywords: "Group Product Manager platform SaaS", location: "Europe" },
+  { keywords: "Staff Product Manager enterprise B2B", location: "Europe" },
+  { keywords: "Product Owner AI ML", location: "Europe" },
+  { keywords: "Senior Product Manager monitoring", location: "Worldwide" },
+  { keywords: "Head of Product open banking", location: "Europe" },
+  { keywords: "VP of Product fintech platform", location: "Europe" },
+  { keywords: "Technical Product Manager MCP agents", location: "Europe" },
+  { keywords: "Lead Product Manager data AI", location: "Europe" },
+  { keywords: "Principal Product Manager growth PM", location: "Worldwide" },
+  { keywords: "Product Manager AI developer tools", location: "Europe" },
+];
+
+// Quantidade de vagas por query (aumentar para mais resultados)
+export const LINKEDIN_JOBS_PER_QUERY = 50;
+
+// ============================================================
+// Queries do JSearch (RapidAPI)
+// =================================================================
+export const JSEARCH_QUERIES = [
+  "Senior Product Manager AI remote Europe",
+  "Head of Product LLM fintech remote",
+  "Technical Product Manager AI agents remote EU",
+  "Lead Product Manager enterprise B2B remote",
+  "Principal Product Manager AI ML remote",
+  "Group Product Manager fintech payments remote Europe",
+  // Novas queries para maior cobertura
+  "Product Manager MCP AI agents remote",
+  "Director of Product enterprise B2B remote Europe",
+  "Staff Product Manager fintech open banking remote",
+  "VP of Product AI startup remote",
+];
+
+export const JSEARCH_OPTIONS = {
+  pagesPerQuery: 1,
+  datePosted: "month",
+  remoteJobsOnly: true,
+  employmentTypes: "FULLTIME,CONTRACTOR",
+};

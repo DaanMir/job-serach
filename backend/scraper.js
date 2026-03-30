@@ -13,7 +13,6 @@ const GOOGLE_CX = process.env.GOOGLE_CX;
 const JSEARCH_API_KEY = process.env.JSEARCH_API_KEY;
 const APIFY_TOKEN = process.env.APIFY_TOKEN || process.env.APiFY_TOKEN;
 
-// ─────────────────────────────────────────────
 const US_ONLY_PATTERNS = [
   /\bUnited States only\b/i, /\bUS only\b/i, /\bUSA only\b/i, /\bU\.S\. only\b/i,
   /must be (authorized|eligible) to work in the (US|USA|United States)/i,
@@ -144,10 +143,13 @@ export async function fetchHimalayas() {
 
 // ─────────────────────────────────────────────
 // LINKEDIN via Apify — curious_coder/linkedin-jobs-scraper
-// Input schema confirmed: https://apify.com/curious_coder/linkedin-jobs-scraper/input-schema
-//   urls  (array, REQUIRED) — LinkedIn Jobs search page URLs
-//   count (integer, optional) — max results per URL
-//   scrapeCompany (boolean, optional) — skip to save credits
+//
+// Output fields (confirmed from sample output on actor README):
+//   id, link, title, companyName, location, descriptionText,
+//   postedAt, salaryInfo[], seniorityLevel, employmentType
+//
+// Input fields (confirmed from input-schema page):
+//   urls (array, REQUIRED), count (int), scrapeCompany (bool)
 // ─────────────────────────────────────────────
 
 function buildLinkedInSearchUrl(keywords, location = "") {
@@ -157,7 +159,7 @@ function buildLinkedInSearchUrl(keywords, location = "") {
     f_WT: "2",         // Remote only
     f_E: "4,5,6",      // Senior / Director / Executive
     f_TPR: "r2592000", // Past 30 days
-    sortBy: "DD",       // Most recent
+    sortBy: "DD",
   });
   return `https://www.linkedin.com/jobs/search/?${params.toString()}`;
 }
@@ -173,17 +175,16 @@ const LINKEDIN_SEARCH_QUERIES = [
 
 export async function fetchLinkedInViaApify() {
   if (!APIFY_TOKEN) {
-    console.warn("⚠️  APIFY_TOKEN not set — LinkedIn scraping disabled. Add it to .env to enable.");
+    console.warn("⚠️  APIFY_TOKEN not set — LinkedIn scraping disabled.");
     return [];
   }
 
   const searchUrls = LINKEDIN_SEARCH_QUERIES.map((q) => buildLinkedInSearchUrl(q.keywords, q.location));
 
-  // FIX: correct field name is 'urls' (not 'queries'), confirmed from input schema page
   const input = {
-    urls: searchUrls,    // REQUIRED — array of LinkedIn search page URLs
-    count: 20,           // optional — max results per URL
-    scrapeCompany: false, // optional — skip company details to save credits
+    urls: searchUrls,    // REQUIRED — confirmed field name from input-schema
+    count: 20,           // optional — confirmed field name
+    scrapeCompany: false, // skip company details to save credits
   };
 
   try {
@@ -199,18 +200,24 @@ export async function fetchLinkedInViaApify() {
 
     const results = [];
     for (const item of items) {
-      const title   = item.positionName || item.title || "";
-      const company = item.companyName  || item.company || "";
-      const url     = item.jobUrl       || item.url || "";
-      if (!title || !url) continue;
+      const title   = item.title || "";
+      const company = item.companyName || "";
+      // FIX: correct output field is 'link', not 'jobUrl' (confirmed from actor README sample)
+      const url     = item.link || item.applyUrl || "";
+
+      if (!title || !url) {
+        console.log(`  ⚠️ Skipped item missing title or url:`, { title, url, keys: Object.keys(item).join(",") });
+        continue;
+      }
+
       const id = `linkedin_${Buffer.from(normalizeForId(title, company)).toString("base64").substring(0, 32)}`;
       results.push({
         id, source: "LinkedIn", title, company,
         location: item.location || "Remote",
         url,
         description: (item.descriptionText || item.description || "").substring(0, 3000),
-        salary: item.salary || null,
-        publishedAt: item.postedAt || item.publishedAt || null,
+        salary: item.salaryInfo?.join(" - ") || null,
+        publishedAt: item.postedAt || null,
       });
     }
     console.log(`  ✅ ${results.length} valid LinkedIn jobs parsed`);
@@ -224,15 +231,11 @@ export async function fetchLinkedInViaApify() {
   }
 }
 
-const TARGET_TITLE_KEYWORDS = [
-  "product manager","head of product","vp of product","director of product",
-  "principal pm","lead pm","group pm","technical pm","ai pm","product owner",
-];
-
 export async function enrichLinkedInJDs(linkedInJobs) {
   if (!JSEARCH_API_KEY) return linkedInJobs;
   const toEnrich = linkedInJobs.filter((j) =>
-    TARGET_TITLE_KEYWORDS.some((kw) => j.title?.toLowerCase().includes(kw)) &&
+    ["product manager","head of product","vp of product","director of product","principal pm","lead pm","group pm","technical pm","ai pm","product owner"]
+      .some((kw) => j.title?.toLowerCase().includes(kw)) &&
     (!j.description || j.description.length < 100) && j.url
   );
   if (toEnrich.length === 0) return linkedInJobs;
@@ -373,7 +376,7 @@ export async function fetchAllJobs() {
 
   const sourceSummary = {};
   for (const [k, v] of Object.entries(scraperHealth)) sourceSummary[k] = v.count;
-  console.log("📊 Jobs per source (before URL filter):", sourceSummary);
+  console.log("📊 Jobs per source:", sourceSummary);
 
   const all = [
     ...(remotive.value?.jobs || []), ...himaJobs, ...linkedInEnriched,

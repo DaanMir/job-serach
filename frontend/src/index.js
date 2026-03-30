@@ -1,6 +1,4 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<React.StrictMode><App /></React.StrictMode>);
+// Legacy CRA entry point — kept for git history.
+// Vite uses /src/main.jsx as entry (defined in frontend/index.html).
+// This file is not loaded by Vite.
+export * from './main.jsx';

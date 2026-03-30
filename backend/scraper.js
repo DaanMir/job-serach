@@ -1,5 +1,4 @@
 import axios from "axios";
-import linkedIn from "linkedin-jobs-api";
 import { SERP_LINKEDIN_QUERIES } from "./config.js";
 import fetchWWR from "./scrapers/weworkremotely.js";
 import fetchWellfound from "./scrapers/wellfound.js";
@@ -12,6 +11,7 @@ const SERP_API_KEY = process.env.SERP_API_KEY;
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const GOOGLE_CX = process.env.GOOGLE_CX;
 const JSEARCH_API_KEY = process.env.JSEARCH_API_KEY;
+const APIFY_TOKEN = process.env.APIFY_TOKEN || process.env.APiFY_TOKEN;
 
 // ─────────────────────────────────────────────
 // FILTRO US-ONLY
@@ -101,11 +101,6 @@ function normalizeForId(title = "", company = "") {
 
 // ─────────────────────────────────────────────
 // URL VALIDATION
-// Only applied to sources that build synthetic URLs from slugs.
-// Sources with canonical URLs (Remotive, LinkedIn, JSearch, SerpAPI)
-// are skipped — their URLs come directly from the data.
-// Permissive: only 404 and 410 are treated as dead.
-// HEAD fallback: retries with GET if server returns 405 (Method Not Allowed).
 // ─────────────────────────────────────────────
 
 async function checkUrl(url) {
@@ -115,28 +110,25 @@ async function checkUrl(url) {
       timeout: 6000,
       maxRedirects: 5,
       headers: { "User-Agent": "Mozilla/5.0 (compatible; JobScout/1.0)" },
-      validateStatus: () => true, // never throw on HTTP errors
+      validateStatus: () => true,
     });
     if (res.status === 405) {
-      // Server doesn't allow HEAD — retry with GET
       const getRes = await axios.get(url, {
         timeout: 6000,
         maxRedirects: 5,
         headers: { "User-Agent": "Mozilla/5.0 (compatible; JobScout/1.0)" },
         validateStatus: () => true,
-        responseType: "stream", // don't download body
+        responseType: "stream",
       });
-      getRes.data?.destroy?.(); // close stream immediately
+      getRes.data?.destroy?.();
       return getRes.status === 404 || getRes.status === 410 ? "dead" : "ok";
     }
     return res.status === 404 || res.status === 410 ? "dead" : "ok";
   } catch {
-    // Connection error, timeout, DNS failure — treat as dead
     return "dead";
   }
 }
 
-// Run URL checks in parallel with a concurrency limit.
 async function validateJobUrls(jobs, sourceName) {
   const CONCURRENCY = 5;
   const results = new Map();
@@ -150,12 +142,9 @@ async function validateJobUrls(jobs, sourceName) {
     results.set(job.id, status);
   }
 
-  // Fill initial batch
   for (let i = 0; i < Math.min(CONCURRENCY, jobs.length); i++) {
     inFlight.push(processNext());
   }
-
-  // Process remaining queue
   while (queue.length > 0) {
     await Promise.race(inFlight);
     inFlight.push(processNext());
@@ -167,7 +156,6 @@ async function validateJobUrls(jobs, sourceName) {
     console.log(`  🔗 [url-check] ${dead.length} dead link(s) filtered from ${sourceName}:`);
     dead.forEach((j) => console.log(`    ✗ ${j.title} @ ${j.company} — ${j.url}`));
   }
-
   return jobs.filter((j) => results.get(j.id) !== "dead");
 }
 
@@ -252,60 +240,122 @@ export async function fetchHimalayas() {
 }
 
 // ─────────────────────────────────────────────
-// LINKEDIN DIRECT
+// LINKEDIN via Apify
+// Replaces linkedin-jobs-api npm package.
+// Actor: apify/linkedin-jobs-scraper
+// Free tier: $5/month → ~12.500 vagas/mês
+// Docs: https://apify.com/apify/linkedin-jobs-scraper
 // ─────────────────────────────────────────────
-export async function fetchLinkedInDirect() {
-  const results = [];
-  const queries = [
-    { keyword: "Senior Product Manager AI", location: "Europe" },
-    { keyword: "Head of Product AI ML", location: "Europe" },
-    { keyword: "Technical Product Manager fintech", location: "Europe" },
-    { keyword: "Lead Product Manager LLM agents", location: "" },
-  ];
 
-  for (const q of queries) {
-    try {
-      const jobs = await linkedIn.query({
-        keyword: q.keyword,
-        location: q.location,
-        dateSincePosted: "past month",
-        jobType: "full time",
-        remoteFilter: "remote",
-        experienceLevel: "senior",
-        limit: "15",
-        sortBy: "recent",
-      });
+const LINKEDIN_QUERIES = [
+  { keywords: "Senior Product Manager AI LLM",     location: "Europe",    remote: true },
+  { keywords: "Head of Product AI fintech",          location: "Europe",    remote: true },
+  { keywords: "Technical Product Manager AI agents", location: "Europe",    remote: true },
+  { keywords: "Lead Product Manager enterprise B2B", location: "Worldwide", remote: true },
+  { keywords: "Principal Product Manager AI ML",     location: "Europe",    remote: true },
+  { keywords: "Senior PM LLM open finance payments", location: "Europe",    remote: true },
+];
 
-      for (const job of jobs) {
-        const title = job.position || job.title || "";
-        const url = job.jobUrl || "";
-        if (!title || !url) continue;
-
-        const stableKey = normalizeForId(title, job.company || "");
-        const id = `linkedin_${Buffer.from(stableKey).toString("base64").substring(0, 32)}`;
-
-        results.push({
-          id,
-          source: "LinkedIn",
-          title,
-          company: job.company,
-          location: job.location || "Remote",
-          url,
-          description: job.description || "",
-          salary: null,
-          publishedAt: job.agoTime || null,
-        });
-      }
-    } catch (e) {
-      console.error("LinkedIn direct error:", e.message);
-    }
-    await new Promise((r) => setTimeout(r, 1500));
+export async function fetchLinkedInViaApify() {
+  if (!APIFY_TOKEN) {
+    console.warn("⚠️  APIFY_TOKEN not set — LinkedIn scraping disabled. Add token to .env to enable.");
+    return [];
   }
-  return results;
+
+  // Build Apify Actor input — one entry per search query
+  // Actor: apify/linkedin-jobs-scraper
+  // https://apify.com/apify/linkedin-jobs-scraper
+  const input = {
+    queries: LINKEDIN_QUERIES.map((q) => ({
+      query: q.keywords,
+      location: q.location,
+    })),
+    // Filters applied via Actor params
+    experienceLevel: ["SENIOR", "DIRECTOR", "EXECUTIVE"],
+    workType: ["REMOTE"],
+    publishedAt: "PAST_MONTH",
+    maxResults: 25,
+    proxy: {
+      useApifyProxy: true,
+      apifyProxyGroups: ["RESIDENTIAL"],
+    },
+  };
+
+  try {
+    console.log("  🔵 Starting Apify LinkedIn Actor run...");
+
+    // Start the Actor run synchronously (waits for completion)
+    const runRes = await axios.post(
+      "https://api.apify.com/v2/acts/apify~linkedin-jobs-scraper/runs?waitForFinish=120",
+      input,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${APIFY_TOKEN}`,
+        },
+        timeout: 135_000, // 2min 15s — matches waitForFinish + buffer
+      }
+    );
+
+    const run = runRes.data?.data;
+    if (!run?.defaultDatasetId) {
+      console.error("Apify run did not return a dataset ID", runRes.data);
+      return [];
+    }
+
+    console.log(`  ✅ Apify run ${run.id} finished — fetching results from dataset...`);
+
+    // Fetch results from the dataset
+    const dataRes = await axios.get(
+      `https://api.apify.com/v2/datasets/${run.defaultDatasetId}/items?clean=true&format=json`,
+      { headers: { Authorization: `Bearer ${APIFY_TOKEN}` }, timeout: 30_000 }
+    );
+
+    const items = dataRes.data || [];
+    console.log(`  📦 Apify returned ${items.length} LinkedIn jobs`);
+
+    const results = [];
+    for (const item of items) {
+      // Apify linkedin-jobs-scraper output shape:
+      // { id, title, company, location, url, description, salary, postedAt, ... }
+      const title = item.title || item.positionName || "";
+      const company = item.company || item.companyName || "";
+      const url = item.jobUrl || item.url || "";
+      if (!title || !url) continue;
+
+      const stableKey = normalizeForId(title, company);
+      const id = `linkedin_apify_${Buffer.from(stableKey).toString("base64").substring(0, 32)}`;
+
+      results.push({
+        id,
+        source: "LinkedIn",
+        title,
+        company,
+        location: item.location || "Remote",
+        url,
+        description: item.description?.substring(0, 3000) || "",
+        salary: item.salary || null,
+        publishedAt: item.postedAt || item.publishedAt || null,
+      });
+    }
+
+    return results;
+  } catch (e) {
+    if (e.response?.status === 402) {
+      console.error("Apify: free credits exhausted for this month. LinkedIn scraping skipped.");
+    } else if (e.code === "ECONNABORTED" || e.message?.includes("timeout")) {
+      console.error("Apify: Actor run timed out. Try again or increase waitForFinish.");
+    } else {
+      console.error("Apify LinkedIn error:", e.response?.data || e.message);
+    }
+    return [];
+  }
 }
 
 // ─────────────────────────────────────────────
-// ENRIQUECIMENTO JD via JSearch job-details
+// JD enrichment via JSearch (LinkedIn only)
+// Only called if a LinkedIn job still has no description
+// after Apify (Apify normally returns full JDs)
 // ─────────────────────────────────────────────
 const TARGET_TITLE_KEYWORDS = [
   "product manager", "head of product", "vp of product",
@@ -314,8 +364,7 @@ const TARGET_TITLE_KEYWORDS = [
 ];
 
 function isRelevantTitle(title = "") {
-  const t = title.toLowerCase();
-  return TARGET_TITLE_KEYWORDS.some((kw) => t.includes(kw));
+  return TARGET_TITLE_KEYWORDS.some((kw) => title.toLowerCase().includes(kw));
 }
 
 export async function enrichLinkedInJDs(linkedInJobs) {
@@ -325,10 +374,10 @@ export async function enrichLinkedInJDs(linkedInJobs) {
     (j) => isRelevantTitle(j.title) && (!j.description || j.description.length < 100) && j.url
   );
 
-  console.log(`  🔍 Enriching ${toEnrich.length} LinkedIn jobs with JSearch job-details...`);
+  if (toEnrich.length === 0) return linkedInJobs;
+  console.log(`  🔍 Enriching ${toEnrich.length} LinkedIn jobs with JSearch (Apify already provided the rest)...`);
 
   const enriched = new Map();
-
   for (const job of toEnrich) {
     try {
       const jobIdMatch = job.url.match(/\/jobs\/view\/(\d+)/);
@@ -346,7 +395,6 @@ export async function enrichLinkedInJDs(linkedInJobs) {
       const details = res.data?.data?.[0];
       if (details?.job_description) {
         enriched.set(job.id, details.job_description.substring(0, 3000));
-        console.log(`    ✓ Got JD for "${job.title}" at ${job.company}`);
       }
     } catch {
       // Silencioso
@@ -507,63 +555,64 @@ export async function fetchAllJobs() {
   console.log("🔍 Fetching jobs from all sources...");
 
   const [
-    remotive, himalayas, linkedInDirect, jsearch, serp, google,
+    remotive, himalayas, linkedIn, jsearch, serp, google,
     wwr, wellfound, remoteCo, workingNomads, jobspresso, euroRemote,
   ] = await Promise.allSettled([
-    runScraper("Remotive", fetchRemotive),
-    runScraper("Himalayas", fetchHimalayas),
-    runScraper("LinkedIn", fetchLinkedInDirect),
-    runScraper("JSearch", fetchJSearch),
-    runScraper("SerpAPI", fetchViaSerpApi),
-    runScraper("Google", fetchViaGoogleCustomSearch),
+    runScraper("Remotive",       fetchRemotive),
+    runScraper("Himalayas",      fetchHimalayas),
+    runScraper("LinkedIn",       fetchLinkedInViaApify),
+    runScraper("JSearch",        fetchJSearch),
+    runScraper("SerpAPI",        fetchViaSerpApi),
+    runScraper("Google",         fetchViaGoogleCustomSearch),
     runScraper("WeWorkRemotely", fetchWWR),
-    runScraper("Wellfound", fetchWellfound),
-    runScraper("Remote.co", fetchRemoteCo),
-    runScraper("WorkingNomads", fetchWorkingNomads),
-    runScraper("Jobspresso", fetchJobspresso),
+    runScraper("Wellfound",      fetchWellfound),
+    runScraper("Remote.co",      fetchRemoteCo),
+    runScraper("WorkingNomads",  fetchWorkingNomads),
+    runScraper("Jobspresso",     fetchJobspresso),
     runScraper("EuroRemoteJobs", fetchEuroRemoteJobs),
   ]);
 
+  // Collect health per source
   const scraperHealth = {};
-  for (const result of [remotive, himalayas, linkedInDirect, jsearch, serp, google, wwr, wellfound, remoteCo, workingNomads, jobspresso, euroRemote]) {
+  for (const result of [remotive, himalayas, linkedIn, jsearch, serp, google, wwr, wellfound, remoteCo, workingNomads, jobspresso, euroRemote]) {
     if (result.status === "fulfilled") {
       const h = result.value.health;
       scraperHealth[h.source] = { status: h.status, count: h.count, error: h.error };
     }
   }
 
-  const linkedInJobs = linkedInDirect.status === "fulfilled" ? linkedInDirect.value.jobs : [];
+  // Enrich LinkedIn jobs that still lack a description (Apify usually returns full JDs)
+  const linkedInJobs = linkedIn.status === "fulfilled" ? linkedIn.value.jobs : [];
   const linkedInEnriched = await enrichLinkedInJDs(linkedInJobs);
 
   // URL validation for sources that build synthetic URLs from slugs.
-  // Sources with canonical URLs (Remotive, LinkedIn, JSearch, SerpAPI, Google)
-  // are intentionally skipped — their URLs come directly from the data source.
+  // LinkedIn (Apify), Remotive, JSearch, SerpAPI, Google are skipped —
+  // their URLs come directly from the data source.
   console.log("🔗 Validating URLs for slug-based sources...");
   const [himaJobs, wwrJobs, wellfoundJobs, remoteCoJobs, workingNomadsJobs, jobspressoJobs, euroRemoteJobs] =
     await Promise.all([
-      himalayas.value?.jobs?.length ? validateJobUrls(himalayas.value.jobs, "Himalayas") : Promise.resolve([]),
-      wwr.value?.jobs?.length ? validateJobUrls(wwr.value.jobs, "WeWorkRemotely") : Promise.resolve([]),
-      wellfound.value?.jobs?.length ? validateJobUrls(wellfound.value.jobs, "Wellfound") : Promise.resolve([]),
-      remoteCo.value?.jobs?.length ? validateJobUrls(remoteCo.value.jobs, "Remote.co") : Promise.resolve([]),
-      workingNomads.value?.jobs?.length ? validateJobUrls(workingNomads.value.jobs, "WorkingNomads") : Promise.resolve([]),
-      jobspresso.value?.jobs?.length ? validateJobUrls(jobspresso.value.jobs, "Jobspresso") : Promise.resolve([]),
-      euroRemote.value?.jobs?.length ? validateJobUrls(euroRemote.value.jobs, "EuroRemoteJobs") : Promise.resolve([]),
+      himalayas.value?.jobs?.length     ? validateJobUrls(himalayas.value.jobs,     "Himalayas")     : Promise.resolve([]),
+      wwr.value?.jobs?.length           ? validateJobUrls(wwr.value.jobs,           "WeWorkRemotely") : Promise.resolve([]),
+      wellfound.value?.jobs?.length     ? validateJobUrls(wellfound.value.jobs,     "Wellfound")      : Promise.resolve([]),
+      remoteCo.value?.jobs?.length      ? validateJobUrls(remoteCo.value.jobs,      "Remote.co")      : Promise.resolve([]),
+      workingNomads.value?.jobs?.length ? validateJobUrls(workingNomads.value.jobs, "WorkingNomads")  : Promise.resolve([]),
+      jobspresso.value?.jobs?.length    ? validateJobUrls(jobspresso.value.jobs,    "Jobspresso")     : Promise.resolve([]),
+      euroRemote.value?.jobs?.length    ? validateJobUrls(euroRemote.value.jobs,    "EuroRemoteJobs") : Promise.resolve([]),
     ]);
 
   const sourceSummary = {};
   for (const [key, val] of Object.entries(scraperHealth)) {
     sourceSummary[key] = val.count;
   }
-  sourceSummary["LinkedIn w/ JD"] = linkedInEnriched.filter((j) => j.description?.length > 100).length;
   console.log("📊 Jobs per source (before URL filter):", sourceSummary);
 
   const all = [
-    ...(remotive.value?.jobs || []),
+    ...(remotive.value?.jobs  || []),
     ...himaJobs,
     ...linkedInEnriched,
-    ...(jsearch.value?.jobs || []),
-    ...(serp.value?.jobs || []),
-    ...(google.value?.jobs || []),
+    ...(jsearch.value?.jobs   || []),
+    ...(serp.value?.jobs      || []),
+    ...(google.value?.jobs    || []),
     ...wwrJobs,
     ...wellfoundJobs,
     ...remoteCoJobs,

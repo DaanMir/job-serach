@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "test": "node --test scorer.test.js",
     "install:browsers": "npx playwright install chromium"
   },
   "dependencies": {
@@ -14,7 +15,6 @@
     "dotenv": "^16.4.0",
     "express": "^4.18.0",
     "groq-sdk": "^0.3.0",
-    "linkedin-jobs-api": "^1.0.7",
     "playwright": "^1.44.0"
   }
 }

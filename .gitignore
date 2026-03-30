@@ -16,6 +16,7 @@ files.zip
 # BUILD OUTPUTS
 # ===================
 frontend/build/
+frontend/dist/
 frontend/node_modules/
 backend/node_modules/
 
